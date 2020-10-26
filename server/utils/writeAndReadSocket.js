@@ -1,40 +1,26 @@
-const { PromiseSocket } = require("promise-socket");
-const {getEtx,getStx} = require('./utils');
+const fs = require("fs")
 
-let stx = getStx();
-let etx = getEtx();
+const {PromiseReadable} = require("promise-readable")
 
-const writeAndReadSocket = async(dataWrite) =>{
+async function writeAndReadSocket() {
+  const rstream = new PromiseReadable(
+    fs.createReadStream('log.txt', {
+      highWaterMark: 1024,
+    }),
+  )
 
-    try {
-    
-        const host = '5.88.63.78';
-        const port = 9005;
-    
-        const socket = new PromiseSocket();
+  let data = '';
 
-        await socket.connect({host, port});
-        await socket.write(
-          `${stx}${dataWrite}${etx}`,
-        );
-    
-        let data = '';
-    
-        for (let chunk; (chunk = await socket.read()); ) {
-            data += chunk.toString();
-            if (chunk.toString().slice(1, -1).endsWith('</WaWi>')) {
-                break;
-            }
-        }    
-        await socket.end();
-        data = data.slice(1, -1);
-        
-        return data;
-      } catch (e) {
-        console.error("Connection error:", e);
-        return e;
-      }
+  for (let chunk; (chunk = await rstream.read()); ) {
+    console.info(`Read ${chunk.length} bytes chunk`)
+    total += chunk.length
+  }
 
-} 
+  console.info(`Read ${total} bytes in total`)
+  
+  rstream.destroy();
+  console.log(total.toString());
+  return total.toString();
+}
 
 module.exports = writeAndReadSocket;
