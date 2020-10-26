@@ -1,5 +1,19 @@
 {
-	"url": "http://localhost:8080/geoinventarios16/rest/wsdevproductoId",
-	"data": "{\"ProductoCodigoBarraId\":\"7791001008852\",\"BultoIdOriginalCD\":\"\"}",
-	"state": false
+  "ws_error": [
+    {
+      "url": "http://localhost:8080/geoinventarios16/rest/wsdevproductoId",
+      "data": "{\"ProductoCodigoBarraId\":\"7791001008852\",\"BultoIdOriginalCD\":\"\"}",
+      "state": false
+    },
+    {
+      "url": "http://localhost:8080/geoinventarios16/rest/wsdevproductoId",
+      "data": "{\"ProductoCodigoBarraId\":\"7791001008852\",\"BultoIdOriginalCD\":\"\"}",
+      "state": true
+    },
+    {
+      "url": "http://localhost:8080/geoinventarios16/rest/wsdevproductoId",
+      "data": "{\"ProductoCodigoBarraId\":\"7791001008852\",\"BultoIdOriginalCD\":\"\"}",
+      "state": false
+    }
+  ]
 }

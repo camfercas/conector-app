@@ -44,18 +44,20 @@ const writeAndReadSocket = async(dataWrite) =>{
                 // console.log(data)
 
                 // Si el log en la configuracion es true loguea todos los Mensajes
-                if (log){
-                    fs.appendFile('log.txt',`${data}\r\n`, function (err) {
-                        if (err) return console.log(err);
-                    });
+                if(!data.includes("SMsg")){
+                    if (log){
+                        graboLog(data);
+                    }
                 }
 
                 // Chequeo si el mensaje es por una consulta de stock (VMsg) o por una baja (AMsg)
                 // Si es asi se guarda en un archivo la respuesta para que luego el WS que pidio esta informacion la procese
                 if(data.includes("VMsg") || data.includes("AMsg")){
+
                     fs.appendFile('mensajes.txt',data, function (err) {
                         if (err) return console.log(err);
                     });
+
                 }else{
                     // Tira a consola el mensaje que llego del robot
                     console.log(data);
@@ -117,9 +119,7 @@ const writeAndReadSocket = async(dataWrite) =>{
 
                                 // Guardo en el log si en la configuracion esta prendido
                                 if (log){
-                                    fs.appendFile('log.txt',`${dataToWrite}\r\n`, function (err) {
-                                        if (err) return console.log(err);
-                                    });
+                                    graboLog(dataToWrite);
                                 }
 
                                 // Escribe el socket el mensaje nuevo para que el robot lo reciba
@@ -129,18 +129,11 @@ const writeAndReadSocket = async(dataWrite) =>{
                             })
                               .catch(function (error) {
 
-                                // Guardo en el log si en la data enviada para luego reintentarla
-                                let error_ws = {
-                                    url: error.config.url,
-                                    data: error.config.data,
-                                    state: false
+                                if(log){
+                                    graboLog("ERROR: Error al consumir datos de GeoInventarios - WS: " + error.config.url);
                                 }
+                                console.log("ERROR: Error al consumir datos de GeoInventarios - WS: " + error.config.url);
 
-                                fs.appendFile('ws_errors.json',`${JSON.stringify(error_ws,3,null)}\r\n`, function (err) {
-                                    if (err) return console.log(err);
-                                });
-
-                                console.log("Error al consumir datos de GeoInventarios");
                             });
 
                         }else if(parseInt(state) === 2){
@@ -151,9 +144,7 @@ const writeAndReadSocket = async(dataWrite) =>{
                                                       
                             // Guardo en el log si en la configuracion esta prendido
                             if (log){
-                                fs.appendFile('log.txt',`${dataToWrite}\r\n`, function (err) {
-                                    if (err) return console.log(err);
-                                });
+                                graboLog(dataToWrite);
                             }
 
                             console.log(`${stx}${dataToWrite}${etx}`);
@@ -173,22 +164,74 @@ const writeAndReadSocket = async(dataWrite) =>{
                                 // Hay que tomar el SKU del codigo de barras que envia el robot
                                 let productoId = ProductoOriginal(barcode);
 
+                                if (log){
+                                    graboLog(`Consume WS: ${ws.WSRecepcionRobot} -> Datos: {"BultoIdOriginalCD": ${deliveryNumber},"ProductoId": ${productoId}} `);
+                                }
+                                
                                 // Envio a GeoInventarios los datos del producto y el bulto
                                 await Axios.post(ws.WSRecepcionRobot,{
                                     "BultoIdOriginalCD": deliveryNumber,
                                     "ProductoId": productoId
                                 }).then(function (response) {
+
+                                    if (log){
+                                        graboLog(`Producto ${productoId} - Bulto ${deliveryNumber} ingresado correctamente en Inventarios`);
+                                    }  
+
                                     console.log(`Producto ${productoId} - Bulto ${deliveryNumber} ingresado correctamente en Inventarios`);
                                 })
                                   .catch(function (error) {
-                                    console.log("Error al consumir datos de GeoInventarios");
+
+                                    if (log) {
+                                        graboLog("ERROR: Error al consumir datos de GeoInventarios - WS: " + error.config.url);
+                                    }
+
+                                    if (error.response) {
+                                        console.log(error.response.data);
+                                        console.log(error.response.status);
+                                        console.log(error.response.headers);
+                                    } else if (error.request) {
+                                        console.log(error.request);
+                                    } else {
+                                        console.log('Error', error.message);
+                                    }
+                                    console.log(error.config);
+
+                                    // // Guardo en el log si en la data enviada para luego reintentarla
+                                    // let obj = {
+                                    //     ws_error: []
+                                    // }
+
+                                    // let error_ws = {
+                                    //     url: error.config.url,
+                                    //     data: error.config.data,
+                                    //     state: false
+                                    // }
+
+                                    // fs.readFile('ws_errors.json', 'utf8', function readFileCallback(err, data){
+                                    //     if (err){
+                                    //         console.log(err);
+                                    //     } else {
+                                    //     obj = JSON.parse(data); //now it an object
+                                    //     obj.ws_error.push(error_ws); //add some data
+                                    //     json = JSON.stringify(obj); //convert it back to json
+                                    //     fs.writeFileSync('ws_errors.json', json, 'utf8'); // write it back 
+                                    // }});                                    
+                                                                  
+                                    console.error("Error al consumir datos de GeoInventarios");
                                 });
     
                             }
 
-                        }else{
+                        }else if(parseInt(state) === 7){
                             // Si el state es 7 no porque no se pudo ingresar el producto
-                            console.log("NO SE PUDO INGRESAR EL PRODUCTO");
+                            let productoId = ProductoOriginal(barcode);
+                            if (log) {
+                                graboLog(`ERROR: No se pudo ingresar el producto: ${productoId}`);
+                            }                             
+                            console.log(`ERROR: No se pudo ingresar el producto: ${productoId}`);
+                        }else{
+                            console.log("Se cerró la recepcion del bulto: " + deliveryNumber);
                         }
                     }else if(data.includes("PMsg")){
                         
@@ -217,12 +260,23 @@ const writeAndReadSocket = async(dataWrite) =>{
                             // Crea el PCmd
                             // Ej. <WaWi><PCmd RequesterNumber="201" Code="4" Country="39" BarCode="000592182" ItemName="BIFERDIL CREMA PEINAR KERATINA 155 GRS." ItemTyp="MED" ItemUnit="Un"/></WaWi>
                             let dataToWrite = PCmd(requesterNumber,code,country,barcode,itemName,itemTyp,itemUnit);
+
+                            if (log){
+                                graboLog(dataToWrite);
+                            }
+
                             console.log(`${stx}${dataToWrite}${etx}`);
+
                             socket.write(
                                 `${stx}${dataToWrite}${etx}`,
                             );
                         })
                           .catch(function (error) {
+
+                            if (log) {
+                                graboLog("ERROR: Error al consumir datos de GeoInventarios - WS: " + error.config.url);
+                            }
+
                             console.log("Error al consumir datos de GeoInventarios");
                         });
 
@@ -248,6 +302,10 @@ let parseDataVMsg = (data,SDTProductos) => {
     data = data + "</root>"
     parseString(data, function(err, result) {
         
+        if (err){
+            console.log(`Error en -> parseDataVMsg: ${err}`);
+        }
+
         let dataJsonStr = JSON.stringify(result);
         dataJsonStr = dataJsonStr.replace(/\$/g, 'Msg');
         let dataJson = JSON.parse(dataJsonStr);
@@ -290,7 +348,11 @@ let parseDataAMsg = (data) => {
     let state = '';
 
     parseString(data, function(err, result) {
-        
+
+        if (err){
+            console.log(`Error en -> parseDataAMsg: ${err}`);
+        }
+
         let dataJsonStr = JSON.stringify(result);
         dataJsonStr = dataJsonStr.replace(/\$/g, 'Msg');
         let dataJson = JSON.parse(dataJsonStr);
@@ -315,6 +377,11 @@ let parseDataIMsg = (data) => {
     let text     = '';
 
     parseString(data, function(err, result) {
+
+        if (err){
+            console.log(`Error en -> parseDataIMsg: ${err}`);
+        }
+
         let dataJsonStr = JSON.stringify(result);
         dataJsonStr = dataJsonStr.replace(/\$/g, 'Msg');
         let dataJson = JSON.parse(dataJsonStr);
@@ -342,7 +409,10 @@ let parseDataPMsg = (data) => {
     let barcode = '';
 
     parseString(data, function(err, result) {
-        
+  
+        if (err){
+            console.log(`Error en -> parseDataPMsg: ${err}`);
+        }      
         let dataJsonStr = JSON.stringify(result);
         dataJsonStr = dataJsonStr.replace(/\$/g, 'Msg');
         let dataJson = JSON.parse(dataJsonStr);
@@ -363,6 +433,22 @@ let ProductoOriginal = (barcode) => {
     return productoId;
 }
 
+let graboLog = (datos) => {
+
+    let today = new Date();
+    let date = today.getFullYear()+'-'+(today.getMonth()+1)+'-'+today.getDate();
+    let time = today.getHours() + ":" + today.getMinutes() + ":" + today.getSeconds();
+    let dateTime = date+' '+time;
+
+    datos = datos.replace(stx,'');
+    datos = datos.replace(etx,'');
+    datos = dateTime + ' - ' + datos;
+    fs.appendFile('log.txt',`${datos}\r\n`, function (err) {
+        if (err) return console.log(err);
+    });
+
+}
+
 writeAndReadSocket("<WaWi><SCmd RequesterNumber='1' /></WaWi>");
 
 let jsonParser = bodyParser.json();
@@ -375,6 +461,10 @@ app.post('/Conector/WSConsultarStockProducto',jsonParser, async(req, res) => {
     SDTProductos.forEach(async element => {
         let productoModificado = getBarcode(element.ProductoId);
         const writeData = VCmd(productoModificado,order);
+
+        if (log){
+            graboLog(writeData);
+        }
 
         await socket.write(
             `${stx}${writeData}${etx}`,
@@ -426,17 +516,17 @@ app.post('/Conector/WSBajaProductos',jsonParser, async(req, res) => {
     let order = Math.floor(Math.random() * 100000000);
 
     const writeData = ACmd(NroBandejaSalida,order,Productos);
-    console.log(writeData);
+
+    console.log(`WSBajaProductos: -> Orden: ${order} - Productos: ${JSON.stringify(Productos,3,null)}`);
+
+    if (log){
+        graboLog(writeData);
+    }
 
     await socket.write(
         `${stx}${writeData}${etx}`,
     );       
     
-    // res.status(200).json({
-    //     Resultado: true,
-    //     Message: ""
-    // });    
-
     fs.watchFile("mensajes.txt",{bigint: false,persistent: true,interval: 100,},(curr, prev) => { 
 
         const readedFile = fs.readFileSync("mensajes.txt", "utf8");
@@ -450,7 +540,7 @@ app.post('/Conector/WSBajaProductos',jsonParser, async(req, res) => {
         });
             
         let state = parseDataAMsg(data);
-        console.log("ESTADO: " + state);
+
         let Resultado = false;
         if (parseInt(state) <= 1){
             Resultado = true;
@@ -462,6 +552,57 @@ app.post('/Conector/WSBajaProductos',jsonParser, async(req, res) => {
         });  
 
     }); 
+
+});
+
+// A desarrollar
+app.get('/Conector/WSReintentarErrores',jsonParser, async(req, res) => {
+
+    // Guardo en el log si en la data enviada para luego reintentarla
+    // let obj = {
+    //     ws_error: []
+    // }
+
+    // let error_ws = {
+    //     url: error.config.url,
+    //     data: error.config.data,
+    //     state: false
+    // }
+
+    let json = fs.readFileSync('ws_errors.json');
+    let {ws_error} = JSON.parse(json);
+
+    let ws_error_pendientes = ws_error.filter(ws => ws.state===false);
+    
+    // console.log(ws_error_pendientes);
+    let enviadosCorrectamente = 0;
+
+    ws_error_pendientes.forEach(async pend => {
+
+        await Axios.post(pend.url,pend.data,{headers:{'Content-Type': 'application/json; charset=utf-8'}}).then(function (response) {
+            console.log(response.data);
+            enviadosCorrectamente += 1;
+        })
+        .catch(function (error) {
+            if (error.response) {
+                console.log(error.response.data);
+                console.log(error.response.status);
+                console.log(error.response.headers);
+            } else if (error.request) {
+                console.log(error.request);
+            } else {
+                console.log('Error', error.message);
+            }
+            console.log(error.config);
+        });
+
+    });
+
+    res.status(200).json({
+        resultado: true,
+        cant_enviados: enviadosCorrectamente
+    })
+
 
 });
 
