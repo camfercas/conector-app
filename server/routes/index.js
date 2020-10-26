@@ -11,102 +11,211 @@ const getBarcode = require('../utils/getMod10digit');
 const {getEtx,getStx} = require('../utils/utils');
 const {VCmd,ICmd,PCmd,ACmd} = require('../utils/armarXML');
 const fs = require('fs');
-var parseString = require('xml2js').parseString;
+const parseString = require('xml2js').parseString;
+let {ws,log} = require('../config/config.json');
 
 let stx = getStx();
 let etx = getEtx();
 
+// Crea el socket y abre la conexión
 const socketAux = new PromiseSocket();
 const socket = openSocket(socketAux);
 
+// Esta funcion lee todo lo que el robot escribe en el socket
 const writeAndReadSocket = async(dataWrite) =>{
 
     try {
+        // Escribe en el socket el dialogo SCmd para inicializar el robot y ver si responde el SMsg
         await socket.write(
           `${stx}${dataWrite}${etx}`,
         );
     
         let data = '';
-
+        
+        // Este for es el que se queda escuchando los mensajes que llegan al socket (socket.read())
         for (let chunk; (chunk = await socket.read()); ) {
+            // chunk es tipo buffer y hay que convertirlo a string
             data += chunk.toString();
-
+            
+            // Queda esperando a que el mensaje finalize
             if (chunk.toString().slice(1, -1).endsWith('</WaWi>')) {
 
+                // Para que loguee todos los mensajes en la consola 
+                // console.log(data)
+
+                // Si el log en la configuracion es true loguea todos los Mensajes
+                if (log){
+                    fs.appendFile('log.txt',`${data}\r\n`, function (err) {
+                        if (err) return console.log(err);
+                    });
+                }
+
+                // Chequeo si el mensaje es por una consulta de stock (VMsg) o por una baja (AMsg)
+                // Si es asi se guarda en un archivo la respuesta para que luego el WS que pidio esta informacion la procese
                 if(data.includes("VMsg") || data.includes("AMsg")){
-                    fs.appendFile('log.txt',data, function (err) {
+                    fs.appendFile('mensajes.txt',data, function (err) {
                         if (err) return console.log(err);
                     });
                 }else{
+                    // Tira a consola el mensaje que llego del robot
                     console.log(data);
+
+                    // Chequea si el mensaje es por una alta en el robot "IMsg"
                     if(data.includes("IMsg")){
                         
+                        // Procesa el mensaje y obtiene los datos
+                        // Ej. <WaWi><IMsg OrderNumber="199913" RequesterNumber="101" Code="4" Country="39" BarCode="7791001008852" OrgBarCode="" Date="1980-01-01T00:00:00.000-02:00" DeliveryNumber="" Quantity="1" State="1" BatchNumber="" ExternalIdCode="" Field1="0" Field2="0" Field3="0" Field4="0"/></WaWi>
                         let {orderNumber,requesterNumber,deliveryNumber,country,code,barcode,fecha,state,text} = parseDataIMsg(data.slice(1,-1));
                         
+                        // 0 stock input request new delivery
+                        // 1 stock input request stock return
+                        // 2 start new delivery
+                        // 3 end new delivery
+                        // 4 set stock location number for pack as stock return
+                        // 5 set stock location number for pack as new delivery
+                        // 6 pack was input
+                        // 7 pack was not input
+
+                        // Si el state es 0 o 1 es para comenzar una alta de producto
                         if (parseInt(state) <= 1){
                             
-                            await Axios.post('http://localhost:8080/geoinventarios16/rest/wsdevproductoId',{
+                            // Va a buscar a GeoInventarios el SKU del producto a travez del Codigo de Barra ingresado en el robot.
+                            // Tambien se envia el deliveryNumber (numero de bulto), si este tiene, GeoInventarios valida si
+                            // el bulto que viene es correcto para su uso.
+                            await Axios.post(ws.wsdevproductoId,{
                                 "ProductoCodigoBarraId": barcode,
                                 "BultoIdOriginalCD": deliveryNumber
                             }).then(function (response) {
+
+                                // Se fija si el resultado de GeoInventarios dio error, si da error se tiene que enviar al robot
+                                // en el ICmd el State = "1" para que no deje ingresar el producto en el robot y tambien se envia
+                                // el Text para que muestre en pantalla del robot el motivo del error
+                                // Si no hay error se envia State = "0" para que lo ingrese.
+
+                                // GeoInventarios devuelve el resultado en false cuando el producto no existe o cuando viene un 
+                                // numero de bulto incorrecto o ya ingresado.
+
                                 let stateCmd = 0;
+                                
                                 if(!Boolean(response.data.Resultado)){
                                     text = response.data.Messages[0].Description;
                                     stateCmd = 1;
                                 }
                                 
-                                let modifBarcode =getBarcode(response.data.ProductoId);
+                                // En el robot no se guarda el codigo de barra ingresado del producto, se debe guardar con el SKU modificado.
+                                // La modificacion consiste en transformarlo a codigo de barra (Code 32)
+                                // Ej. Prod SKU: 59218 (CB: 7791001008852) -> Se guarda en el robot con el Codigo de Barra: 000592182
+
+                                let modifBarcode = getBarcode(response.data.ProductoId);
+
+                                // Se crea el dialogo ICmd para enviarlo al robot y este lo procese
+                                // Ej. <WaWi><ICmd OrderNumber="199913" RequesterNumber="101" DeliveryNumber="" Country="39" Code="4" BarCode="000592182" Date="1980-01-01T00:00:00.000-02:00" State="0" BatchNumber="" ExternalIdCode=""/></WaWi>
                                 let dataToWrite = ICmd(orderNumber,requesterNumber,deliveryNumber,country,code,modifBarcode,fecha,stateCmd,text);
-                                console.log( `${stx}${dataToWrite}${etx}`);
+
+                                // Escribe en consola el dialogo enviado al robot
+                                console.log(`${stx}${dataToWrite}${etx}`);
+
+                                // Guardo en el log si en la configuracion esta prendido
+                                if (log){
+                                    fs.appendFile('log.txt',`${dataToWrite}\r\n`, function (err) {
+                                        if (err) return console.log(err);
+                                    });
+                                }
+
+                                // Escribe el socket el mensaje nuevo para que el robot lo reciba
                                 socket.write(
                                     `${stx}${dataToWrite}${etx}`,
                                 );
                             })
                               .catch(function (error) {
-                                console.log(error);
+
+                                // Guardo en el log si en la data enviada para luego reintentarla
+                                let error_ws = {
+                                    url: error.config.url,
+                                    data: error.config.data,
+                                    state: false
+                                }
+
+                                fs.appendFile('ws_errors.json',`${JSON.stringify(error_ws,3,null)}\r\n`, function (err) {
+                                    if (err) return console.log(err);
+                                });
+
+                                console.log("Error al consumir datos de GeoInventarios");
                             });
 
                         }else if(parseInt(state) === 2){
                             
-                            let dataToWrite = ICmd(orderNumber,requesterNumber,deliveryNumber,country,code,barcode,fecha,0,text);                            
-                            console.log( `${stx}${dataToWrite}${etx}`);
+                            // Si el sate es 2, es porque se va a empezar una recepcion de pedido
+                            // El robot espera de respuesta un ICmd con state = "0" para pueda empezar a ingresar productos
+                            let dataToWrite = ICmd(orderNumber,requesterNumber,deliveryNumber,country,code,barcode,fecha,0,text); 
+                                                      
+                            // Guardo en el log si en la configuracion esta prendido
+                            if (log){
+                                fs.appendFile('log.txt',`${dataToWrite}\r\n`, function (err) {
+                                    if (err) return console.log(err);
+                                });
+                            }
+
+                            console.log(`${stx}${dataToWrite}${etx}`);
+                            
+                            // Escribe el socket el mensaje nuevo para que el robot lo reciba
                             socket.write(
                                 `${stx}${dataToWrite}${etx}`,
                               );
 
                         }else if(parseInt(state) === 6) {
 
+                            // El state 6 significa que el producto fue ingresado correctamente en el robot.
+                            // Si viene un numero de bulto (deliveryNumber) tiene que enviar a GeoInventarios el producto ingresado 
+                            // y el numero de bulto para que lo ingrese a la recepcion de pedido que tiene ese bulto
+
                             if(deliveryNumber){
-                                // Consumo inventarios
+                                // Hay que tomar el SKU del codigo de barras que envia el robot
                                 let productoId = ProductoOriginal(barcode);
-                                await Axios.post('http://localhost:8080/geoinventarios16/rest/WSRecepcionRobot',{
+
+                                // Envio a GeoInventarios los datos del producto y el bulto
+                                await Axios.post(ws.WSRecepcionRobot,{
                                     "BultoIdOriginalCD": deliveryNumber,
                                     "ProductoId": productoId
                                 }).then(function (response) {
-                                    console.log(response.data);
+                                    console.log(`Producto ${productoId} - Bulto ${deliveryNumber} ingresado correctamente en Inventarios`);
                                 })
                                   .catch(function (error) {
-                                    console.log(error);
+                                    console.log("Error al consumir datos de GeoInventarios");
                                 });
     
                             }
 
                         }else{
-                            console.log("NO SE PUDO INGRESAR CODIGO: " + state);
+                            // Si el state es 7 no porque no se pudo ingresar el producto
+                            console.log("NO SE PUDO INGRESAR EL PRODUCTO");
                         }
                     }else if(data.includes("PMsg")){
                         
+                        // El PMsg lo envia el robot para obtener informacion del producto
+                        // Se consulta a GeoInventarios los datos (nombre) del producto.
+                        // Luego se envia un PCmd con la info del producto al robot
+
+                        // Procesa el PMsg y toma los datos
+                        // Ej. <WaWi><PMsg RequesterNumber="201" Code="4" Country="39" BarCode="000592182"/></WaWi>
                         let {requesterNumber,code,country,barcode} = parseDataPMsg(data.slice(1,-1));
+                        // Obitene el SKU del codigo de barra
                         let productoId = ProductoOriginal(barcode);
                         
-                        await Axios.post('http://localhost:8080/geoinventarios16/rest/wsdevproductoId',{
+                        // Consume GeoInventarios
+                        await Axios.post(ws.wsdevproductoId,{
                             "CodigoProducto": productoId,
                             "BultoIdOriginalCD": ""
                         }).then(function (response) {
                             
+                            // Descripcion del producto
                             let itemName = response.data.ProductoDescripcion;
+                            
                             let itemTyp = "MED";
                             let itemUnit = "Un";
+
+                            // Crea el PCmd
+                            // Ej. <WaWi><PCmd RequesterNumber="201" Code="4" Country="39" BarCode="000592182" ItemName="BIFERDIL CREMA PEINAR KERATINA 155 GRS." ItemTyp="MED" ItemUnit="Un"/></WaWi>
                             let dataToWrite = PCmd(requesterNumber,code,country,barcode,itemName,itemTyp,itemUnit);
                             console.log(`${stx}${dataToWrite}${etx}`);
                             socket.write(
@@ -114,7 +223,7 @@ const writeAndReadSocket = async(dataWrite) =>{
                             );
                         })
                           .catch(function (error) {
-                            console.log(error);
+                            console.log("Error al consumir datos de GeoInventarios");
                         });
 
                     }
@@ -272,9 +381,9 @@ app.post('/Conector/WSConsultarStockProducto',jsonParser, async(req, res) => {
         );        
     });
 
-    fs.watchFile("log.txt",{bigint: false,persistent: true,interval: 50,},(curr, prev) => { 
+    fs.watchFile("mensajes.txt",{bigint: false,persistent: true,interval: 50,},(curr, prev) => { 
 
-        const readedFile = fs.readFileSync("log.txt", "utf8");
+        const readedFile = fs.readFileSync("mensajes.txt", "utf8");
         let data = '';
         let dataABorrar = '';
         let cantOrdenes = 0;
@@ -301,9 +410,9 @@ app.post('/Conector/WSConsultarStockProducto',jsonParser, async(req, res) => {
                 Message: ""
             });
 
-            fs.unwatchFile("log.txt");
+            fs.unwatchFile("mensajes.txt");
             let newValue = readedFile.replace(dataABorrar,'');
-            fs.writeFileSync('log.txt', newValue, 'utf-8');
+            fs.writeFileSync('mensajes.txt', newValue, 'utf-8');
 
         }
 
@@ -328,9 +437,9 @@ app.post('/Conector/WSBajaProductos',jsonParser, async(req, res) => {
     //     Message: ""
     // });    
 
-    fs.watchFile("log.txt",{bigint: false,persistent: true,interval: 100,},(curr, prev) => { 
+    fs.watchFile("mensajes.txt",{bigint: false,persistent: true,interval: 100,},(curr, prev) => { 
 
-        const readedFile = fs.readFileSync("log.txt", "utf8");
+        const readedFile = fs.readFileSync("mensajes.txt", "utf8");
         let data = '';
 
         let arr = readedFile.split(etx);
@@ -342,13 +451,13 @@ app.post('/Conector/WSBajaProductos',jsonParser, async(req, res) => {
             
         let state = parseDataAMsg(data);
         console.log("ESTADO: " + state);
-        // let Resultado
-        // if (parseInt(state) <= 1){
-            
-        // }
-        fs.unwatchFile("log.txt");
+        let Resultado = false;
+        if (parseInt(state) <= 1){
+            Resultado = true;
+        }
+        fs.unwatchFile("mensajes.txt");
         res.status(200).json({
-            Resultado: true,
+            Resultado,
             Message: ""
         });  
 

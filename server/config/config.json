@@ -1,0 +1,10 @@
+{
+    "ip": "127.0.0.1",
+    "port": 9005,
+    "ws": {
+        "wsdevproductoId": "http://localhost:8080/geoinventarios16/rest/wsdevproductoId",
+        "WSRecepcionRobot": "http://localhost:8080/geoinventarios16/rest/WSRecepcionRobot"
+    },
+    "log": true
+    
+}

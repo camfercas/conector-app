@@ -1,0 +1,5 @@
+{
+	"url": "http://localhost:8080/geoinventarios16/rest/wsdevproductoId",
+	"data": "{\"ProductoCodigoBarraId\":\"7791001008852\",\"BultoIdOriginalCD\":\"\"}",
+	"state": false
+}

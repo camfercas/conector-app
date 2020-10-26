@@ -1,12 +1,10 @@
-const {PromiseSocket, TimeoutError} = require("promise-socket");
+const {TimeoutError} = require("promise-socket");
+const {ip,port} = require('../config/config.json');
 
 let openSocket = (socket) => {
     
-    const host = '127.0.0.1';
-    const port = 9005;
-    
     try {
-        socket.connect({host, port});
+        socket.connect({ip, port});
         return socket;
     } catch (e) {
         if (e instanceof TimeoutError) {
