@@ -2,6 +2,7 @@ let getBarcode = (barcode) => {
     let sum = 0;
     let sum1 = 0;
     let odd = true;
+    barcode = barcode.toString();
     for (let i = barcode.length - 1; i >= 0; i--)
     {
         if (odd == true)

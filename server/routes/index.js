@@ -21,6 +21,12 @@ let etx = getEtx();
 const socketAux = new PromiseSocket();
 const socket = openSocket(socketAux);
 
+let today = new Date();
+let date = today.getFullYear()+'-'+(today.getMonth()+1)+'-'+today.getDate();
+let time = today.getHours() + ":" + today.getMinutes() + ":" + today.getSeconds();
+let dateTime = date +' '+ time;
+let logDate = today.getFullYear() + '' + (today.getMonth()+1) + '' + today.getDate();
+
 // Esta funcion lee todo lo que el robot escribe en el socket
 const writeAndReadSocket = async(dataWrite) =>{
 
@@ -54,9 +60,21 @@ const writeAndReadSocket = async(dataWrite) =>{
                 // Si es asi se guarda en un archivo la respuesta para que luego el WS que pidio esta informacion la procese
                 if(data.includes("VMsg") || data.includes("AMsg")){
 
-                    fs.appendFile('mensajes.txt',data, function (err) {
-                        if (err) return console.log(err);
-                    });
+                    try {
+                        if (fs.existsSync(`${logDate}-mensajes.txt`)) {
+                            fs.appendFile(`${logDate}-mensajes.txt`,data, function (err) {
+                                if (err) return console.log(err);
+                            });
+                        }else{
+                            fs.writeFile(`${logDate}-mensajes.txt`,data, function (err) {
+                                if (err) return console.log(err);
+                            });
+                        }
+                    } catch(err) {
+                        console.error(err);
+                    }
+
+
 
                 }else{
                     // Tira a consola el mensaje que llego del robot
@@ -79,7 +97,7 @@ const writeAndReadSocket = async(dataWrite) =>{
                         // 7 pack was not input
 
                         // Si el state es 0 o 1 es para comenzar una alta de producto
-                        if (parseInt(state) <= 1){
+                        if (parseInt(state) <= 1 || parseInt(state) === 5){
                             
                             // Va a buscar a GeoInventarios el SKU del producto a travez del Codigo de Barra ingresado en el robot.
                             // Tambien se envia el deliveryNumber (numero de bulto), si este tiene, GeoInventarios valida si
@@ -197,26 +215,26 @@ const writeAndReadSocket = async(dataWrite) =>{
                                     }
                                     console.log(error.config);
 
-                                    // // Guardo en el log si en la data enviada para luego reintentarla
-                                    // let obj = {
-                                    //     ws_error: []
-                                    // }
+                                    // Guardo en el log si en la data enviada para luego reintentarla
+                                    let obj = {
+                                        ws_error: []
+                                    }
 
-                                    // let error_ws = {
-                                    //     url: error.config.url,
-                                    //     data: error.config.data,
-                                    //     state: false
-                                    // }
+                                    let error_ws = {
+                                        url: error.config.url,
+                                        data: error.config.data,
+                                        state: false
+                                    }
 
-                                    // fs.readFile('ws_errors.json', 'utf8', function readFileCallback(err, data){
-                                    //     if (err){
-                                    //         console.log(err);
-                                    //     } else {
-                                    //     obj = JSON.parse(data); //now it an object
-                                    //     obj.ws_error.push(error_ws); //add some data
-                                    //     json = JSON.stringify(obj); //convert it back to json
-                                    //     fs.writeFileSync('ws_errors.json', json, 'utf8'); // write it back 
-                                    // }});                                    
+                                    fs.readFile('ws_errors.json', 'utf8', function readFileCallback(err, data){
+                                        if (err){
+                                            console.log(err);
+                                        } else {
+                                        obj = JSON.parse(data); //now it an object
+                                        obj.ws_error.push(error_ws); //add some data
+                                        json = JSON.stringify(obj); //convert it back to json
+                                        fs.writeFileSync('ws_errors.json', json, 'utf8'); // write it back 
+                                    }});                                    
                                                                   
                                     console.error("Error al consumir datos de GeoInventarios");
                                 });
@@ -295,6 +313,50 @@ const writeAndReadSocket = async(dataWrite) =>{
 
 } 
 
+let parseDataVMsgAll = (data,id) => {
+
+    let resultado = [];
+    
+    parseString(data, function(err, result) {
+
+        if (err){
+            console.log(`Error en -> parseDataVMsgAll: ${err}`);
+        }
+
+        let dataJsonStr = JSON.stringify(result);
+        dataJsonStr = dataJsonStr.replace(/\$/g, 'Msg');
+        let dataJson = JSON.parse(dataJsonStr);
+
+        let cantidad = 0;
+        let barcode = "";
+
+        if (dataJson.WaWi.VMsg[0].Record !== undefined){
+            dataJson.WaWi.VMsg[0].Record.forEach(element => {
+                if (barcode === "") {
+                    barcode = element.Msg.BarCode;
+                }
+    
+                if (barcode !== element.Msg.BarCode) {
+                    resultado.push({ ProductoId: ProductoOriginal(barcode), ProductoCantidad: cantidad });
+                    barcode = element.Msg.BarCode;
+                    cantidad = 0;
+                }
+                cantidad += 1;
+    
+            });
+    
+            resultado.push({ ProductoId: ProductoOriginal(barcode), ProductoCantidad: cantidad });            
+        }else{
+            resultado.push({ ProductoId:id, ProductoCantidad:0 });  
+        }
+
+
+    });
+
+    return resultado;
+
+}
+
 let parseDataVMsg = (data,SDTProductos) => {
 
     let resultado = [];
@@ -350,14 +412,15 @@ let parseDataAMsg = (data) => {
     parseString(data, function(err, result) {
 
         if (err){
-            console.log(`Error en -> parseDataAMsg: ${err}`);
+            console.log(`Error en -> parseDataAMsg (datos): ${data}`);
+            console.log(`Error en -> parseDataAMsg (error): ${err}`);
         }
 
         let dataJsonStr = JSON.stringify(result);
         dataJsonStr = dataJsonStr.replace(/\$/g, 'Msg');
         let dataJson = JSON.parse(dataJsonStr);
         
-        state = dataJson.WaWi.AMsg[0].Msg.OrderState;  
+        state = dataJson?.WaWi.AMsg[0].Msg.OrderState;  
       
     })
 
@@ -435,15 +498,10 @@ let ProductoOriginal = (barcode) => {
 
 let graboLog = (datos) => {
 
-    let today = new Date();
-    let date = today.getFullYear()+'-'+(today.getMonth()+1)+'-'+today.getDate();
-    let time = today.getHours() + ":" + today.getMinutes() + ":" + today.getSeconds();
-    let dateTime = date+' '+time;
-
     datos = datos.replace(stx,'');
     datos = datos.replace(etx,'');
     datos = dateTime + ' - ' + datos;
-    fs.appendFile('log.txt',`${datos}\r\n`, function (err) {
+    fs.appendFile(`${logDate}-log.txt`,`${datos}\r\n`, function (err) {
         if (err) return console.log(err);
     });
 
@@ -457,23 +515,62 @@ app.post('/Conector/WSConsultarStockProducto',jsonParser, async(req, res) => {
 
     let SDTProductos = req.body.SDTProductos;
     let order = Math.floor(Math.random() * 100000000);
+    let interval = 350; 
+    let promise = Promise.resolve();
+    let getAll = (SDTProductos.length >= 60) ? true : false;
+    try {
+
+        if (getAll){
+            let writeData = `<WaWi><VCmd OrderNumber="${order}" RequesterNumber="1"/></WaWi>`;
+            await socket.write(
+                `${stx}${writeData}${etx}`,
+            ); 
+            if (log){
+                graboLog(writeData);
+            }            
+        }else{
+            SDTProductos.forEach(async (element,index) => {
+                let productoModificado = getBarcode(element.ProductoId);
+                let writeData = VCmd(productoModificado,order);
+        
+                if (log){
+                    graboLog(writeData);
+                }
     
-    SDTProductos.forEach(async element => {
-        let productoModificado = getBarcode(element.ProductoId);
-        const writeData = VCmd(productoModificado,order);
+                promise = promise.then(async function () {
+                    await socket.write(
+                        `${stx}${writeData}${etx}`,
+                    ); 
+                    return new Promise(function (resolve) {
+                      setTimeout(resolve, interval);
+                    });
+                  });
 
-        if (log){
-            graboLog(writeData);
+            });  
         }
+      
+    } catch (error) {
+        console.log("El SDTProductos no es correcto");
+        res.status(500).json({
+            Resultado: 0,
+            Message: error
+        });           
+    }
+    
+    try {
+        if (fs.existsSync(`${logDate}-mensajes.txt`)) {
+        }else{
+            fs.writeFile(`${logDate}-mensajes.txt`,'', function (err) {
+                if (err) return console.log(err);
+            });
+        }
+    } catch(err) {
+        console.error(err);
+    }    
 
-        await socket.write(
-            `${stx}${writeData}${etx}`,
-        );        
-    });
+    fs.watchFile(`${logDate}-mensajes.txt`,{bigint: false,persistent: true,interval: 50,},(curr, prev) => { 
 
-    fs.watchFile("mensajes.txt",{bigint: false,persistent: true,interval: 50,},(curr, prev) => { 
-
-        const readedFile = fs.readFileSync("mensajes.txt", "utf8");
+        const readedFile = fs.readFileSync(`${logDate}-mensajes.txt`, "utf8");
         let data = '';
         let dataABorrar = '';
         let cantOrdenes = 0;
@@ -482,31 +579,47 @@ app.post('/Conector/WSConsultarStockProducto',jsonParser, async(req, res) => {
         let arr = readedFile.split(etx);
         arr.forEach(element => {
             if (element.includes(order)) {
-                data += element.replace(stx,'');
-                dataABorrar += element + etx;
-                cantOrdenes += 1;
-                if (cantOrdenes === SDTProductos.length){
+
+                if (getAll) {
+                    data += element.replace(stx,'');
                     esUltimoProducto = true;
+                }else{
+                    data += element.replace(stx,'');
+                    dataABorrar += element + etx;
+                    cantOrdenes += 1;
+                    if (cantOrdenes === SDTProductos.length){
+                        esUltimoProducto = true;
+                    }
                 }
+
             }
         });
 
         if (esUltimoProducto){
-            
-            let SDTConsultaStockProductoJson = parseDataVMsg(data,SDTProductos);
+            let SDTConsultaStockProductoJson = [];
+            if (getAll){
+                let stock = parseDataVMsgAll(data,"");
+                SDTConsultaStockProductoJson = stock.filter(function(array_el){
+                    return SDTProductos.filter(function(anotherOne_el){
+                       return anotherOne_el.ProductoId == array_el.ProductoId;
+                    }).length > 0
+                 });
+            }else{
+                SDTConsultaStockProductoJson = parseDataVMsg(data,SDTProductos);
+            }
             res.status(200).json({
                 SDTConsultaStockProductoJson,
                 Resultado: 1,
                 Message: ""
             });
 
-            fs.unwatchFile("mensajes.txt");
+            fs.unwatchFile(`${logDate}-mensajes.txt`);
             let newValue = readedFile.replace(dataABorrar,'');
-            fs.writeFileSync('mensajes.txt', newValue, 'utf-8');
+            fs.writeFileSync(`${logDate}-mensajes.txt`, newValue, 'utf-8');
 
         }
 
-    }); 
+    });    
 
 });
 
@@ -526,10 +639,21 @@ app.post('/Conector/WSBajaProductos',jsonParser, async(req, res) => {
     await socket.write(
         `${stx}${writeData}${etx}`,
     );       
-    
-    fs.watchFile("mensajes.txt",{bigint: false,persistent: true,interval: 100,},(curr, prev) => { 
 
-        const readedFile = fs.readFileSync("mensajes.txt", "utf8");
+    try {
+        if (fs.existsSync(`${logDate}-mensajes.txt`)) {
+        }else{
+            fs.writeFile(`${logDate}-mensajes.txt`,'', function (err) {
+                if (err) return console.log(err);
+            });
+        }
+    } catch(err) {
+        console.error(err);
+    }  
+    
+    fs.watchFile(`${logDate}-mensajes.txt`,{bigint: false,persistent: true,interval: 50,},(curr, prev) => { 
+
+        const readedFile = fs.readFileSync(`${logDate}-mensajes.txt`, "utf8");
         let data = '';
 
         let arr = readedFile.split(etx);
@@ -542,10 +666,12 @@ app.post('/Conector/WSBajaProductos',jsonParser, async(req, res) => {
         let state = parseDataAMsg(data);
 
         let Resultado = false;
-        if (parseInt(state) <= 1){
-            Resultado = true;
+        if (state){
+            if (parseInt(state) <= 1){
+                Resultado = true;
+            }
         }
-        fs.unwatchFile("mensajes.txt");
+        fs.unwatchFile(`${logDate}-mensajes.txt`);
         res.status(200).json({
             Resultado,
             Message: ""
@@ -555,8 +681,38 @@ app.post('/Conector/WSBajaProductos',jsonParser, async(req, res) => {
 
 });
 
+app.get('/Conector/codigodebarraproducto/:id', async(req, res) => {
+
+    let id = req.params.id;
+
+    let idModificado = getBarcode(id);
+
+    res.status(200).json({
+        resultado: true,
+        barcode: idModificado
+    })
+
+
+});
+
+app.get('/Conector/pruebaWawi', jsonParser, async(req, res) => {
+
+    let writeData = req.body.wawi;
+    console.log(writeData);
+
+    await socket.write(
+        `${stx}${writeData}${etx}`,
+    );     
+
+    res.status(200).json({
+        resultado: true
+    })
+
+
+});
+
 // A desarrollar
-app.get('/Conector/WSReintentarErrores',jsonParser, async(req, res) => {
+app.get('/Conector/WSReintentarErrores', async(req, res) => {
 
     // Guardo en el log si en la data enviada para luego reintentarla
     // let obj = {
@@ -603,6 +759,48 @@ app.get('/Conector/WSReintentarErrores',jsonParser, async(req, res) => {
         cant_enviados: enviadosCorrectamente
     })
 
+
+});
+
+app.get('/Conector/StockCompleto',jsonParser, async(req, res) => { 
+
+    let order = Math.floor(Math.random() * 1000);
+    const writeData = `<WaWi><VCmd OrderNumber="${order}" RequesterNumber="1"/></WaWi>`;
+    console.log(writeData);
+    await socket.write(
+        `${stx}${writeData}${etx}`,
+    );  
+
+    fs.watchFile(`${logDate}-mensajes.txt`,{bigint: false,persistent: true,interval: 50,},(curr, prev) => { 
+
+        const readedFile = fs.readFileSync(`${logDate}-mensajes.txt`, "utf8");
+        let data = '';
+        let esUltimoProducto = false;
+
+        let arr = readedFile.split(etx);
+        arr.forEach(element => {
+            if (element.includes(order)) {
+                data += element.replace(stx,'');
+                esUltimoProducto = true;
+            }
+        });
+
+        if (esUltimoProducto){
+            
+            let stock = parseDataVMsgAll(data,"");
+
+            res.status(200).json({
+                result: true,
+                stock
+            });
+
+            fs.unwatchFile(`${logDate}-mensajes.txt`);
+            let newValue = readedFile.replace(stx+data+etx,'');
+            fs.writeFileSync(`${logDate}-mensajes.txt`, newValue, 'utf-8');
+
+        }
+
+    }); 
 
 });
 
